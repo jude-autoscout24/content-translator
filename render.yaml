@@ -1,0 +1,19 @@
+# Render.com Deployment Configuration
+services:
+  - type: web
+    name: content-translator-server
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: cd server && npm ci
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CONTENTFUL_MANAGEMENT_TOKEN
+        sync: false
+      - key: DEEPL_API_KEY
+        sync: false
+      - key: PORT
+        value: 3001
