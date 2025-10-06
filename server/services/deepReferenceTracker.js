@@ -16,6 +16,13 @@ export class DeepReferenceTracker {
   }
 
   /**
+   * Get the Contentful metadata service dynamically
+   */
+  get contentfulMetadataService() {
+    return this.metadataService.contentfulMetadataService || null;
+  }
+
+  /**
    * Build or update the deep reference map for a source-target relationship
    */
   async buildDeepReferenceMap(sourceEntryId, targetEntryId) {
@@ -575,12 +582,32 @@ export class DeepReferenceTracker {
    */
   async storeDeepReferenceMap(sourceEntryId, targetEntryId, deepMap) {
     try {
+      // Try Contentful first
+      if (this.contentfulMetadataService) {
+        try {
+          await this.contentfulMetadataService.storeDeepReferenceMap(
+            sourceEntryId,
+            targetEntryId,
+            deepMap
+          );
+          console.log(
+            `💾 Stored deep reference map in Contentful: ${sourceEntryId}_${targetEntryId}`
+          );
+          return;
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to store deep reference map in Contentful, falling back to file: ${error.message}`
+          );
+        }
+      }
+
+      // Fallback to file system
       const trackingDir = this.metadataService.getTrackingDir();
       const deepMapFile = `${trackingDir}/${sourceEntryId}_${targetEntryId}_deep_refs.json`;
 
       writeFileSync(deepMapFile, JSON.stringify(deepMap, null, 2));
 
-      console.log(`💾 Stored deep reference map: ${deepMapFile}`);
+      console.log(`💾 Stored deep reference map in file: ${deepMapFile}`);
     } catch (error) {
       console.error(`❌ Error storing deep reference map: ${error.message}`);
       throw error;
@@ -592,6 +619,28 @@ export class DeepReferenceTracker {
    */
   async getStoredDeepReferenceMap(sourceEntryId, targetEntryId) {
     try {
+      // Try Contentful first
+      if (this.contentfulMetadataService) {
+        try {
+          const deepMap =
+            await this.contentfulMetadataService.getDeepReferenceMap(
+              sourceEntryId,
+              targetEntryId
+            );
+          if (deepMap) {
+            console.log(
+              `📖 Retrieved deep reference map from Contentful: ${sourceEntryId}_${targetEntryId}`
+            );
+            return deepMap;
+          }
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to get deep reference map from Contentful, falling back to file: ${error.message}`
+          );
+        }
+      }
+
+      // Fallback to file system
       const trackingDir = this.metadataService.getTrackingDir();
       const deepMapFile = `${trackingDir}/${sourceEntryId}_${targetEntryId}_deep_refs.json`;
 
@@ -600,7 +649,9 @@ export class DeepReferenceTracker {
       }
 
       const content = readFileSync(deepMapFile, 'utf-8');
-      return JSON.parse(content);
+      const result = JSON.parse(content);
+      console.log(`📖 Retrieved deep reference map from file: ${deepMapFile}`);
+      return result;
     } catch (error) {
       console.warn(
         `⚠️ Error reading stored deep reference map: ${error.message}`

@@ -15,6 +15,7 @@ import { join, dirname } from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { ChangeDetectionService } from './changeDetectionService.js';
+import { ContentfulMetadataService } from './contentfulMetadataService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,17 +29,24 @@ export class ServerIncrementalTranslationService {
     this.spaceId = null;
     this.environmentId = null;
 
-    // Initialize tracking directory
+    // Initialize tracking directory (backward compatibility)
     this.trackingDir = join(process.cwd(), 'data', 'tracking');
     this.ensureTrackingDirectory();
 
+    // Initialize Contentful metadata service (will be set after initialize() is called)
+    this.contentfulMetadataService = null;
+
     // Initialize change detection service with metadata service
+    const self = this;
     this.metadataService = {
       getTrackingDir: () => this.trackingDir,
       getRelationship: (sourceId, targetId) =>
         this.getRelationship(sourceId, targetId),
       createOrUpdateRelationship: (...args) =>
         this.createOrUpdateRelationship(...args),
+      get contentfulMetadataService() {
+        return self.contentfulMetadataService;
+      },
     };
 
     this.changeDetectionService = new ChangeDetectionService(
@@ -55,6 +63,12 @@ export class ServerIncrementalTranslationService {
     this.environmentId = environmentId;
     this.space = await this.cma.getSpace(spaceId);
     this.environment = await this.space.getEnvironment(environmentId);
+
+    // Initialize Contentful metadata service
+    this.contentfulMetadataService = new ContentfulMetadataService(
+      this.environment
+    );
+    console.log('✅ Initialized Contentful metadata service');
   }
 
   /**
@@ -426,6 +440,28 @@ export class ServerIncrementalTranslationService {
    * Get relationship metadata between source and target entries
    */
   async getRelationship(sourceEntryId, targetEntryId) {
+    // Try Contentful first
+    if (this.contentfulMetadataService) {
+      try {
+        const data =
+          await this.contentfulMetadataService.getRelationshipMetadata(
+            sourceEntryId,
+            targetEntryId
+          );
+        if (data) {
+          console.log(
+            `📖 Retrieved relationship from Contentful: ${sourceEntryId}_${targetEntryId}`
+          );
+          return data;
+        }
+      } catch (error) {
+        console.warn(
+          `⚠️ Failed to get relationship from Contentful, falling back to file: ${error.message}`
+        );
+      }
+    }
+
+    // Fallback to file system
     const filename = `${sourceEntryId}_${targetEntryId}.json`;
     const filePath = join(this.trackingDir, filename);
 
@@ -460,6 +496,7 @@ export class ServerIncrementalTranslationService {
         return null;
       }
 
+      console.log(`📖 Retrieved relationship from file: ${filename}`);
       return data;
     } catch (error) {
       console.error(
@@ -516,26 +553,54 @@ export class ServerIncrementalTranslationService {
     fieldHashes,
     cloneMapping
   ) {
-    const filename = `${sourceEntryId}_${targetEntryId}.json`;
-    const filePath = join(this.trackingDir, filename);
-
     const relationshipData = {
       sourceEntryId,
       targetEntryId,
       metadata: {
         lastTranslatedVersion,
         lastUpdated: new Date().toISOString(),
-        createdAt: existsSync(filePath)
-          ? JSON.parse(readFileSync(filePath, 'utf8')).metadata.createdAt
-          : new Date().toISOString(),
+        createdAt: new Date().toISOString(), // Will be preserved by Contentful service if updating
       },
       translationContext,
       fieldHashes,
       cloneMapping,
     };
 
+    // Try to store in Contentful first
+    if (this.contentfulMetadataService) {
+      try {
+        await this.contentfulMetadataService.storeRelationshipMetadata(
+          sourceEntryId,
+          targetEntryId,
+          relationshipData
+        );
+        console.log(
+          `💾 Relationship metadata updated in Contentful: ${sourceEntryId}_${targetEntryId}`
+        );
+        return;
+      } catch (error) {
+        console.warn(
+          `⚠️ Failed to store in Contentful, falling back to file: ${error.message}`
+        );
+      }
+    }
+
+    // Fallback to file system
+    const filename = `${sourceEntryId}_${targetEntryId}.json`;
+    const filePath = join(this.trackingDir, filename);
+
+    // Preserve createdAt if file exists
+    if (existsSync(filePath)) {
+      try {
+        const existingData = JSON.parse(readFileSync(filePath, 'utf8'));
+        relationshipData.metadata.createdAt = existingData.metadata.createdAt;
+      } catch (error) {
+        console.warn(`⚠️ Could not read existing createdAt: ${error.message}`);
+      }
+    }
+
     writeFileSync(filePath, JSON.stringify(relationshipData, null, 2), 'utf8');
-    console.log(`💾 Relationship metadata updated: ${filename}`);
+    console.log(`💾 Relationship metadata updated in file: ${filename}`);
   }
 
   /**
@@ -617,8 +682,6 @@ export class ServerIncrementalTranslationService {
   async createBackupSnapshot(entryId, entry, reason) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupId = `${entryId}_${timestamp}`;
-    const backupDir = join(this.trackingDir, 'backups');
-    const filePath = join(backupDir, `${backupId}.json`);
 
     const backupData = {
       backupId,
@@ -631,6 +694,28 @@ export class ServerIncrementalTranslationService {
       },
     };
 
+    // Try to store backup in Contentful first
+    // Note: This requires finding a related translation relationship to attach the backup to
+    // For now, we'll store in files but this could be enhanced to use Contentful
+    if (this.contentfulMetadataService) {
+      try {
+        // We could enhance this to store backup data in related translation entries
+        // For now, continue with file storage as backups are less critical than relationship data
+        console.log(
+          `ℹ️ Backup data stored in files (Contentful backup storage not yet implemented)`
+        );
+      } catch (error) {
+        console.warn(`⚠️ Backup storage note: ${error.message}`);
+      }
+    }
+
+    // Create backup directory if it doesn't exist
+    const backupDir = join(this.trackingDir, 'backups');
+    if (!existsSync(backupDir)) {
+      mkdirSync(backupDir, { recursive: true });
+    }
+
+    const filePath = join(backupDir, `${backupId}.json`);
     writeFileSync(filePath, JSON.stringify(backupData, null, 2), 'utf8');
     console.log(`💾 Created backup: ${backupId}`);
 
@@ -1139,7 +1224,23 @@ export class ServerIncrementalTranslationService {
       // Update the clone mapping
       relationship.cloneMapping = updatedCloneMapping;
 
-      // Save the updated relationship
+      // Store in Contentful first
+      if (this.contentfulMetadataService) {
+        try {
+          await this.contentfulMetadataService.storeRelationshipMetadata(
+            sourceEntryId,
+            targetEntryId,
+            relationship
+          );
+          console.log(`💾 Updated clone mapping in Contentful`);
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to update clone mapping in Contentful: ${error.message}`
+          );
+        }
+      }
+
+      // Also save the updated relationship to file as backup
       const filename = `${sourceEntryId}_${targetEntryId}.json`;
       const filePath = join(this.trackingDir, filename);
       writeFileSync(filePath, JSON.stringify(relationship, null, 2), 'utf8');
@@ -1284,15 +1385,34 @@ export class ServerIncrementalTranslationService {
         cloneMapping,
       };
 
-      // Save metadata file
+      // Store in Contentful first, then fall back to file
+      if (this.contentfulMetadataService) {
+        try {
+          await this.contentfulMetadataService.storeRelationshipMetadata(
+            sourceEntryId,
+            targetEntryId,
+            relationshipData
+          );
+          console.log(
+            `📝 Created translation metadata in Contentful: ${sourceEntryId}_${targetEntryId}`
+          );
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to store in Contentful, falling back to file: ${error.message}`
+          );
+        }
+      }
+
+      // Also save metadata file as backup
       const metadataPath = join(
         this.trackingDir,
         `${sourceEntryId}_${targetEntryId}.json`
       );
 
       writeFileSync(metadataPath, JSON.stringify(relationshipData, null, 2));
-
-      console.log(`📝 Created translation metadata: ${metadataPath}`);
+      console.log(
+        `📝 Created translation metadata file backup: ${metadataPath}`
+      );
 
       // Initialize deep reference tracking for the new translation pair
       await this.initializeDeepReferenceTracking(sourceEntryId, targetEntryId);
@@ -1423,7 +1543,7 @@ export class ServerIncrementalTranslationService {
     const cultureMapping = {
       EN: 'en-GB',
       DE: 'de-DE',
-      AT: 'de-AT',
+      BE: 'nl-BE',
       FR: 'fr-FR',
       IT: 'it-IT',
       ES: 'es-ES',

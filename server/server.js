@@ -24,7 +24,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
@@ -367,7 +367,7 @@ app.get('/api/incremental/status', async (req, res) => {
     // Helper function to normalize language codes for comparison
     const normalizeLanguageCode = (lang) => {
       if (!lang) return '';
-      // Convert it-IT to it, de-AT to de, etc.
+      // Convert it-IT to it, nl-BE to nl, etc.
       return lang.split('-')[0].toLowerCase();
     };
 

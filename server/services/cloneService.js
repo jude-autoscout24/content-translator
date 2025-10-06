@@ -59,7 +59,6 @@ export class ServerContentfulCloneService {
       'FR-BE': 'fr-BE',
       'NL-BE': 'nl-BE',
       'FR-LU': 'fr-LU',
-      'DE-AT': 'de-AT',
     };
 
     this.cultureFieldNames = ['culture'];
@@ -239,7 +238,7 @@ export class ServerContentfulCloneService {
   mapContentfulLocaleToDeepLLanguage(contentfulLocale) {
     const localeMapping = {
       'de-DE': 'DE',
-      'de-AT': 'DE',
+      'nl-BE': 'NL',
       'en-GB': 'EN-GB',
       'en-US': 'EN-US',
       'en-CA': 'EN-US',
