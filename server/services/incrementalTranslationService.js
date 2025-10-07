@@ -307,9 +307,116 @@ export class ServerIncrementalTranslationService {
       console.log(
         `🔍 DEBUG getTranslationRelationships: Looking for entryId: ${entryId}`
       );
-      console.log(`🔍 DEBUG: Tracking directory: ${this.trackingDir}`);
 
       const relationships = [];
+
+      // Try Contentful first
+      if (this.contentfulMetadataService) {
+        try {
+          console.log(
+            `🔍 DEBUG: Searching Contentful for relationships with entry: ${entryId}`
+          );
+
+          // Get all relationships where this entry is either source or target
+          const entries = await this.environment.getEntries({
+            content_type: 'translationMetadata',
+            // Use OR query to find relationships where entryId is either source or target
+            'sys.id[exists]': true, // This gets all translationMetadata entries
+            limit: 1000, // Increase limit to get all relationships
+          });
+
+          console.log(
+            `🔍 DEBUG: Found ${entries.total} total relationship entries in Contentful`
+          );
+
+          // Filter relationships that contain our entryId
+          for (const entry of entries.items) {
+            try {
+              const sourceEntryId = entry.fields.sourceEntryId?.['en-US-POSIX'];
+              const targetEntryId = entry.fields.targetEntryId?.['en-US-POSIX'];
+
+              if (!sourceEntryId || !targetEntryId) {
+                console.warn(
+                  `⚠️ Skipping entry ${entry.sys.id}: missing source or target ID`
+                );
+                continue;
+              }
+
+              // Check if this relationship involves our entryId
+              if (sourceEntryId === entryId || targetEntryId === entryId) {
+                const isSource = sourceEntryId === entryId;
+                const relatedEntryId = isSource ? targetEntryId : sourceEntryId;
+
+                console.log(
+                  `✅ Found relationship: ${sourceEntryId} -> ${targetEntryId} (entry is ${
+                    isSource ? 'source' : 'target'
+                  })`
+                );
+
+                // Get entry details for the related entry
+                let relatedEntry = null;
+                try {
+                  relatedEntry = await this.environment.getEntry(
+                    relatedEntryId
+                  );
+                } catch (error) {
+                  console.warn(
+                    `⚠️ Could not fetch related entry ${relatedEntryId}: ${error.message}`
+                  );
+                }
+
+                const metadata = entry.fields.metadata?.['en-US-POSIX'] || {};
+                const translationContext =
+                  entry.fields.translationContext?.['en-US-POSIX'] || {};
+
+                relationships.push({
+                  id: `${sourceEntryId}_${targetEntryId}`,
+                  sourceEntryId: sourceEntryId,
+                  targetEntryId: targetEntryId,
+                  isSource,
+                  relatedEntry: relatedEntry
+                    ? {
+                        id: relatedEntryId,
+                        contentType: relatedEntry.sys.contentType.sys.id,
+                        title: this.getEntryTitle(relatedEntry),
+                        lastModified: relatedEntry.sys.updatedAt,
+                      }
+                    : {
+                        id: relatedEntryId,
+                        contentType: 'unknown',
+                        title: 'Entry not accessible',
+                        lastModified: 'unknown',
+                      },
+                  translationContext: translationContext,
+                  lastTranslatedVersion: metadata.lastTranslatedVersion || 0,
+                  lastUpdated: metadata.lastUpdated || entry.sys.updatedAt,
+                });
+              }
+            } catch (error) {
+              console.warn(
+                `⚠️ Error processing relationship entry ${entry.sys.id}: ${error.message}`
+              );
+            }
+          }
+
+          console.log(
+            `🔍 DEBUG: Found ${relationships.length} relationships for entry ${entryId} in Contentful`
+          );
+
+          if (relationships.length > 0) {
+            return relationships;
+          }
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to get relationships from Contentful: ${error.message}`
+          );
+        }
+      }
+
+      // Fallback to file system (legacy support)
+      console.log(
+        `🔍 DEBUG: Falling back to file system. Tracking directory: ${this.trackingDir}`
+      );
 
       if (!existsSync(this.trackingDir)) {
         console.log(`🔍 DEBUG: Tracking directory does not exist`);
@@ -364,6 +471,9 @@ export class ServerIncrementalTranslationService {
         }
       }
 
+      console.log(
+        `🔍 DEBUG: Found ${relationships.length} relationships for entry ${entryId} from file system`
+      );
       return relationships;
     } catch (error) {
       console.error('❌ Error getting relationships:', error);
