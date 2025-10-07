@@ -128,6 +128,69 @@ app.get('/api/deepl/status', async (req, res) => {
   }
 });
 
+// Contentful storage diagnostics endpoint
+app.get('/api/contentful/diagnostics', async (req, res) => {
+  try {
+    const { spaceId, environmentId } = req.query;
+
+    // Use default values if not provided
+    const targetSpaceId = spaceId || process.env.CONTENTFUL_SPACE_ID;
+    const targetEnvironmentId =
+      environmentId || process.env.CONTENTFUL_ENVIRONMENT_ID;
+
+    if (!targetSpaceId || !targetEnvironmentId) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'spaceId and environmentId are required (as query params or env vars)',
+      });
+    }
+
+    if (!process.env.CONTENTFUL_MANAGEMENT_TOKEN) {
+      return res.status(500).json({
+        success: false,
+        error: 'CONTENTFUL_MANAGEMENT_TOKEN not configured',
+      });
+    }
+
+    // Create a temporary service instance for diagnostics
+    const client = contentfulManagement.createClient({
+      accessToken: process.env.CONTENTFUL_MANAGEMENT_TOKEN,
+    });
+
+    const space = await client.getSpace(targetSpaceId);
+    const environment = await space.getEnvironment(targetEnvironmentId);
+
+    // Import the service dynamically to avoid circular dependencies
+    const { ContentfulMetadataService } = await import(
+      './services/contentfulMetadataService.js'
+    );
+    const metadataService = new ContentfulMetadataService(environment);
+
+    const diagnostics = await metadataService.diagnoseContentfulStorage();
+
+    res.json({
+      success: true,
+      data: {
+        spaceId: targetSpaceId,
+        environmentId: targetEnvironmentId,
+        ...diagnostics,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Contentful diagnostics failed:', error);
+    res.status(500).json({
+      success: false,
+      error: `Diagnostics failed: ${error.message}`,
+      details: {
+        suggestion: error.message.includes('Unknown content type')
+          ? 'Run: node scripts/install-content-type.js to create the translationMetadata content type'
+          : 'Check your Contentful credentials and space/environment IDs',
+      },
+    });
+  }
+});
+
 // Clone entry endpoint with sophisticated translation logic
 app.post('/api/clone', async (req, res) => {
   try {

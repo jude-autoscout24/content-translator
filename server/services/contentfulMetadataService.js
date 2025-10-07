@@ -91,6 +91,14 @@ export class ContentfulMetadataService {
    * Retrieve relationship metadata
    */
   async getRelationshipMetadata(sourceEntryId, targetEntryId) {
+    const relationshipId = this.generateRelationshipId(
+      sourceEntryId,
+      targetEntryId
+    );
+    console.log(
+      `📖 Attempting to retrieve relationship metadata: ${relationshipId}`
+    );
+
     try {
       const entry = await this.findRelationshipMetadata(
         sourceEntryId,
@@ -98,8 +106,15 @@ export class ContentfulMetadataService {
       );
 
       if (!entry) {
+        console.log(
+          `❌ No relationship metadata found in Contentful for: ${relationshipId}`
+        );
         return null;
       }
+
+      console.log(
+        `✅ Found relationship metadata in Contentful: ${relationshipId}`
+      );
 
       // Convert Contentful entry format back to our expected format
       return {
@@ -107,14 +122,14 @@ export class ContentfulMetadataService {
         targetEntryId: entry.fields.targetEntryId[this.locale],
         translationContext: entry.fields.translationContext[this.locale],
         metadata: entry.fields.metadata[this.locale],
-        fieldHashes: entry.fields.fieldHashes[this.locale],
-        cloneMapping: entry.fields.cloneMapping[this.locale],
+        fieldHashes: entry.fields.fieldHashes?.[this.locale] || {},
+        cloneMapping: entry.fields.cloneMapping?.[this.locale] || {},
         deepReferenceMap: entry.fields.deepReferenceMap?.[this.locale] || null,
         backupData: entry.fields.backupData?.[this.locale] || null,
       };
     } catch (error) {
       console.error(
-        `❌ Error retrieving relationship metadata: ${error.message}`
+        `❌ Error retrieving relationship metadata for ${relationshipId}: ${error.message}`
       );
       return null;
     }
@@ -130,15 +145,31 @@ export class ContentfulMetadataService {
     );
 
     try {
+      // Query with locale-specific field reference for better reliability
       const entries = await this.environment.getEntries({
         content_type: this.contentTypeId,
-        'fields.relationshipId': relationshipId,
+        [`fields.relationshipId.${this.locale}`]: relationshipId,
         limit: 1,
       });
 
+      console.log(
+        `🔍 Searching for relationship: ${relationshipId}, found: ${entries.items.length} entries`
+      );
       return entries.items.length > 0 ? entries.items[0] : null;
     } catch (error) {
       console.error(`❌ Error finding relationship metadata: ${error.message}`);
+
+      // Check if it's a content type not found error
+      if (
+        error.message.includes('The resource could not be found') ||
+        error.message.includes('Unknown content type') ||
+        error.message.includes('translationMetadata')
+      ) {
+        console.error(
+          `❌ Content type 'translationMetadata' not found in Contentful. Please run: node scripts/install-content-type.js`
+        );
+      }
+
       return null;
     }
   }
@@ -310,5 +341,73 @@ export class ContentfulMetadataService {
       '⚠️ getTrackingDir() is deprecated - using Contentful storage'
     );
     return 'contentful-storage';
+  }
+
+  /**
+   * Diagnostic method to check if the content type exists and list existing relationships
+   */
+  async diagnoseContentfulStorage() {
+    console.log('🔍 Running Contentful storage diagnostics...');
+
+    try {
+      // Check if content type exists
+      const contentType = await this.environment.getContentType(
+        this.contentTypeId
+      );
+      console.log(`✅ Content type '${this.contentTypeId}' exists`);
+      console.log(
+        `   Fields: ${contentType.fields.map((f) => f.id).join(', ')}`
+      );
+
+      // List existing relationships
+      const entries = await this.environment.getEntries({
+        content_type: this.contentTypeId,
+        limit: 10,
+      });
+
+      console.log(
+        `📊 Found ${entries.total} relationship entries in Contentful:`
+      );
+      entries.items.forEach((entry, index) => {
+        const relationshipId =
+          entry.fields.relationshipId?.[this.locale] || 'unknown';
+        console.log(
+          `   ${index + 1}. ${relationshipId} (Entry ID: ${entry.sys.id})`
+        );
+      });
+
+      return {
+        contentTypeExists: true,
+        totalRelationships: entries.total,
+        relationships: entries.items.map((entry) => ({
+          relationshipId: entry.fields.relationshipId?.[this.locale],
+          sourceEntryId: entry.fields.sourceEntryId?.[this.locale],
+          targetEntryId: entry.fields.targetEntryId?.[this.locale],
+          entryId: entry.sys.id,
+        })),
+      };
+    } catch (error) {
+      if (
+        error.message.includes('The resource could not be found') ||
+        error.message.includes('Unknown content type')
+      ) {
+        console.error(`❌ Content type '${this.contentTypeId}' not found!`);
+        console.error(`💡 Run: node scripts/install-content-type.js`);
+        return {
+          contentTypeExists: false,
+          error: 'Content type not found',
+          totalRelationships: 0,
+          relationships: [],
+        };
+      }
+
+      console.error(`❌ Diagnostic error: ${error.message}`);
+      return {
+        contentTypeExists: false,
+        error: error.message,
+        totalRelationships: 0,
+        relationships: [],
+      };
+    }
   }
 }

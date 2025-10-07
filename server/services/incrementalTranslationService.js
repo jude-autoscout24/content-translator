@@ -440,6 +440,9 @@ export class ServerIncrementalTranslationService {
    * Get relationship metadata between source and target entries
    */
   async getRelationship(sourceEntryId, targetEntryId) {
+    const relationshipId = `${sourceEntryId}_${targetEntryId}`;
+    console.log(`🔍 Looking for relationship: ${relationshipId}`);
+
     // Try Contentful first
     if (this.contentfulMetadataService) {
       try {
@@ -450,9 +453,13 @@ export class ServerIncrementalTranslationService {
           );
         if (data) {
           console.log(
-            `📖 Retrieved relationship from Contentful: ${sourceEntryId}_${targetEntryId}`
+            `📖 ✅ Retrieved relationship from Contentful: ${relationshipId}`
           );
           return data;
+        } else {
+          console.log(
+            `📖 ❌ No relationship found in Contentful: ${relationshipId}`
+          );
         }
       } catch (error) {
         console.warn(
@@ -465,9 +472,20 @@ export class ServerIncrementalTranslationService {
     const filename = `${sourceEntryId}_${targetEntryId}.json`;
     const filePath = join(this.trackingDir, filename);
 
+    console.log(`📁 Checking file system for: ${filePath}`);
+
     if (!existsSync(filePath)) {
+      console.log(`📁 ❌ No relationship file found: ${filename}`);
+      console.log(
+        `💡 This indicates the relationship was never created or the server storage is inconsistent.`
+      );
+      console.log(
+        `💡 Make sure to run a full translation to establish the relationship.`
+      );
       return null;
     }
+
+    console.log(`📁 ✅ Found relationship file: ${filename}`);
 
     try {
       const content = readFileSync(filePath, 'utf8');
